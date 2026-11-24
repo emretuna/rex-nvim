@@ -1,0 +1,201 @@
+-- rex-nvim: Rex-side entry point.
+--
+-- init.lua in ~/.config/rex does:
+--   require("rex-nvim").setup{ root = "/path/to/rex-nvim" }
+-- and this module registers the actions and the default key bindings.
+
+local util = require("rex-nvim.util")
+local sidebar = require("rex-nvim.sidebar")
+local agents = require("rex-nvim.agents")
+
+local M = {}
+
+M.SHELL = "com.superlogical.terminal.shell"
+
+local function log(level, message)
+  if rex.log then rex.log(level, "rex-nvim: " .. tostring(message)) end
+end
+
+-- A key this file's load already bound. Our own action may be rebound safely;
+-- anything else belongs to the user and is never overridden.
+local function local_binding(key, action)
+  local ok, bindings = pcall(rex.bindings, { key = key })
+  if not ok or type(bindings) ~= "table" then
+    ok, bindings = pcall(rex.bindings)
+  end
+  if not ok or type(bindings) ~= "table" then return nil end
+  for _, binding in ipairs(bindings) do
+    if binding.key == key and binding.mode == nil and binding.action ~= action then
+      return binding
+    end
+  end
+  return nil
+end
+
+local function bind_unless_taken(key, action)
+  if key == false or key == nil or key == "" then return false end
+  local existing = local_binding(key, action)
+  if existing then
+    log("warn", string.format("%s is already bound to %s; not overriding it",
+      key, tostring(existing.action or "a function")))
+    return false
+  end
+  rex.bind(key, action)
+  return true
+end
+
+local function pick(ctx)
+  local session_id = (ctx and ctx.session_id) or rex.session_id
+  local origin = ctx and ctx.block_id
+  local function say(message)
+    util.notify(session_id, origin, message)
+    log("warn", message)
+  end
+  local sup_ok, sup_err = util.ensure_supervisor()
+  if not sup_ok then return nil, sup_err end
+  local listed, lerr = agents.list(session_id)
+  if not listed then return nil, "could not list agent panes: " .. tostring(lerr) end
+  local list = listed.agents or {}
+  if #list == 0 then
+    say("no agent panes found in session")
+    return { picked = false, reason = "no agent panes found in session" }
+  end
+  local view = util.view(session_id)
+  local window = (origin and util.window_for_block(view, origin))
+    or util.find_window(view, view and view.active_window_id)
+  local window_id = window and window.window_id
+  local target
+  for _, agent in ipairs(list) do
+    if origin and agent.block_id == origin then target = agent break end
+  end
+  if not target then
+    for _, agent in ipairs(list) do
+      if agent.window_id == window_id then target = agent break end
+    end
+  end
+  target = target or list[1]
+  local cwd = target.cwd or os.getenv("HOME") or "/"
+  local bin = util.bin()
+  local layer, err = rex.session.new_layer({
+    window_id = window_id,
+    bounds = { 0.1, 0.2, 0.8, 0.6 },
+    focus = true,
+    session_id = session_id,
+    layout = rex.layout.block({
+      flavor = M.SHELL,
+      options = {
+        command = {
+          bin, "pick",
+          "--session", session_id,
+          "--window", window_id,
+          "--block", target.block_id,
+          "--kind", target.kind,
+          "--origin", origin or target.block_id,
+          "--cwd", cwd,
+        },
+        shell = "none",
+        cwd = cwd,
+      },
+    }),
+  })
+  if not layer then return nil, "could not open the picker: " .. tostring(err) end
+  local block_id = layer.block_ids and layer.block_ids[1]
+  if block_id then
+    rex.session.set_block_label({
+      block_id = block_id,
+      label = "open file",
+      session_id = session_id,
+    })
+  end
+  return { picked = true, block_id = block_id, layer_id = layer.layer_id }
+end
+
+M.pick = pick
+
+function M.setup(opts)
+  opts = opts or {}
+  local root = opts.root or util.root()
+  if type(root) ~= "string" or root == "" then
+    error("rex-nvim.setup: root is required (the path to the rex-nvim checkout)", 0)
+  end
+  util.set_root(root)
+  if opts.bin then util.set_bin(opts.bin) end
+
+  local keys = opts.keys or {}
+  local toggle_key = keys.toggle
+  if toggle_key == nil then toggle_key = "cmd+e" end
+  local pick_key = keys.pick
+  if pick_key == nil then pick_key = "cmd+o" end
+
+  rex.action({
+    name = "rex_nvim_toggle",
+    title = "rex-nvim: Toggle Sidebar",
+    description = "Show or hide the persistent nvim sidebar for this window.",
+    category = "rex-nvim",
+    run = function(ctx)
+      local result, err = sidebar.toggle(ctx)
+      if not result then error(err or "rex-nvim: could not toggle the sidebar", 0) end
+      return result
+    end,
+  })
+
+  rex.action({
+    name = "rex_nvim_pick",
+    title = "rex-nvim: Open File",
+    description = "Pick a file from the session's agent panes and open it in the sidebar.",
+    category = "rex-nvim",
+    run = function(ctx)
+      local result, err = pick(ctx)
+      if not result then error(err or "rex-nvim: could not open the picker", 0) end
+      return result
+    end,
+  })
+
+  rex.action({
+    name = "rex_nvim_open",
+    title = "rex-nvim: Open File in Sidebar",
+    description = "Open a file at an optional line and column in the window's sidebar.",
+    category = "rex-nvim",
+    args = {
+      path = "string",
+      line = "integer?",
+      col = "integer?",
+      window_id = "string?",
+      origin_block_id = "string?",
+    },
+    run = function(ctx, args)
+      local result, err = sidebar.open_file(args, ctx and ctx.session_id)
+      if not result then error(err or "rex-nvim: could not open the file", 0) end
+      return result
+    end,
+  })
+
+  rex.action({
+    name = "rex_nvim_stop",
+    title = "rex-nvim: Stop Sidebar Daemon",
+    description = "Stop a sidebar nvim daemon by key; force discards unsaved work.",
+    category = "rex-nvim",
+    args = { key = "string", force = "boolean?" },
+    run = function(ctx, args)
+      local result, err = sidebar.stop_daemon(args.key, args.force == true)
+      if not result then error(err or "rex-nvim: could not stop the daemon", 0) end
+      return result
+    end,
+  })
+
+  rex.action({
+    name = "rex_nvim_agents",
+    title = "rex-nvim: List Agent Panes",
+    description = "List the agent panes in this session as JSON.",
+    category = "rex-nvim",
+    run = function(ctx)
+      return agents.list(ctx and ctx.session_id)
+    end,
+  })
+
+  bind_unless_taken(toggle_key, "rex_nvim_toggle")
+  bind_unless_taken(pick_key, "rex_nvim_pick")
+  return M
+end
+
+return M
