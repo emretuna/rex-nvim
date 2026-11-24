@@ -47,39 +47,10 @@ end
 
 -- Startup: stop daemons whose window or session no longer exists, then sweep
 -- socket files that have no state at all.
-local function reap()
-  local listed = rex.call("session.list") or {}
-  local sessions = {}
-  for _, session in ipairs(listed.sessions or {}) do
-    sessions[session.session_id] = true
-  end
-  local states = util.load_all_states()
-  log("reaping: " .. tostring(#states) .. " state file(s), "
-    .. tostring(#(listed.sessions or {})) .. " session(s)")
-  for _, state in ipairs(states) do
-    local alive = sessions[state.session_id] == true
-    if alive then
-      local view, verr = util.view_via_cli(state.session_id)
-      alive = false
-      for _, window in ipairs((view and view.windows) or {}) do
-        if window.window_id == state.window_id then
-          alive = true
-          break
-        end
-      end
-      if not alive then
-        log("window " .. tostring(state.window_id) .. " is gone from session "
-          .. tostring(state.session_id) .. (verr and (" (" .. tostring(verr) .. ")") or ""))
-      end
-    else
-      log("session " .. tostring(state.session_id) .. " is gone")
-    end
-    if not alive then
-      log("reaping orphaned daemon " .. tostring(state.key))
-      local ok, err = sidebar.stop_daemon(state.key, true)
-      if not ok then log("could not stop " .. tostring(state.key) .. ": " .. tostring(err)) end
-    end
-  end
+-- Invariant: NEVER reap on unknown. A failed session.list or session.view
+-- cannot prove a window is gone; keep the daemon (it may hold unsaved buffers
+-- and comments) and retry on the next supervisor start.
+local function sweep_sockets()
   for _, dir in ipairs({ util.state_dir() .. "/run", "/tmp/rex-nvim-" .. util.uid() .. "/run" }) do
     local listing = util.exec({ "ls", "-1", dir }, { timeout = 5 })
     if listing and listing.ok then
@@ -92,6 +63,53 @@ local function reap()
       end
     end
   end
+end
+
+local function reap_state(state, reason)
+  log(reason)
+  log("reaping orphaned daemon " .. tostring(state.key))
+  local ok, err = sidebar.stop_daemon(state.key, true)
+  if not ok then log("could not stop " .. tostring(state.key) .. ": " .. tostring(err)) end
+end
+
+local function reap()
+  local listed = rex.call("session.list")
+  if type(listed) ~= "table" or type(listed.sessions) ~= "table" then
+    log("session.list unavailable; skipping orphan reap (never reap on unknown)")
+    sweep_sockets()
+    return
+  end
+  local sessions = {}
+  for _, session in ipairs(listed.sessions) do
+    sessions[session.session_id] = true
+  end
+  local states = util.load_all_states()
+  log("reaping: " .. tostring(#states) .. " state file(s), "
+    .. tostring(#listed.sessions) .. " session(s)")
+  for _, state in ipairs(states) do
+    if sessions[state.session_id] ~= true then
+      reap_state(state, "session " .. tostring(state.session_id) .. " is gone")
+    else
+      local view, verr = util.view_via_cli(state.session_id)
+      if view == nil then
+        log("session.view unavailable for " .. tostring(state.session_id)
+          .. " (" .. tostring(verr) .. "); keeping daemon " .. tostring(state.key))
+      else
+        local found = false
+        for _, window in ipairs(view.windows or {}) do
+          if window.window_id == state.window_id then
+            found = true
+            break
+          end
+        end
+        if not found then
+          reap_state(state, "window " .. tostring(state.window_id)
+            .. " is gone from session " .. tostring(state.session_id))
+        end
+      end
+    end
+  end
+  sweep_sockets()
 end
 
 local function stop_window(session_id, window_id)
