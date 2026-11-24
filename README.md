@@ -4,6 +4,10 @@ Neovim built into your [Rex](https://www.superlogical.com/rex) workspace: a
 persistent nvim sidebar one key away, a fuzzy picker over the files your agent
 touched, and code annotations you send straight to the agent's pane.
 
+Inspired by [herdr-nvim](https://github.com/ChmaraX/herdr-nvim) — the same
+feature set, rebuilt on Rex's native primitives: detachable panes, event
+scripts, and terminal process introspection.
+
 Two halves in one repo:
 
 - **`rex/`** — the Rex config module: actions, key bindings, the sidebar
@@ -44,9 +48,12 @@ Two halves in one repo:
 
 ## Install
 
-From this checkout:
+Clone the repo and run the installer (any checkout path works; `install.sh`
+records the repo root):
 
 ```sh
+git clone https://github.com/emretuna/rex-nvim.git ~/Code/rex-nvim
+cd ~/Code/rex-nvim
 ./install.sh
 ```
 
@@ -67,17 +74,14 @@ failures, when the server is unreachable). Run it again to upgrade;
 `./install.sh --uninstall` stops the daemons and removes the marker block,
 symlink, binary and `install.json`.
 
-The nvim half installs with lazy.nvim. Once the repo is pushed:
+The nvim half installs with lazy.nvim:
 
 ```lua
 { "emretuna/rex-nvim", opts = {} }
 ```
 
-Until then, point lazy at the checkout:
-
-```lua
-{ dir = "~/Code/rex-nvim", opts = {} }
-```
+Working from a local checkout instead? Point lazy at it:
+`{ dir = "~/Code/rex-nvim", opts = {} }`.
 
 The sidebar daemon injects its own runtimepath, so the Rex half works without
 a plugin manager; the nvim plugin is what provides `:Rex` and the comments.
@@ -96,8 +100,7 @@ a plugin manager; the nvim plugin is what provides `:Rex` and the comments.
 
 The Rex keys are never bound over an existing `init.lua` binding. Pass
 `setup{ keys = { toggle = "…", pick = "…" } }` to choose others, or `false` to
-skip one. The nvim-side keys are configurable per |rex-nvim-config| in
-`:help rex-nvim`.
+skip one. The nvim-side keys are configurable — see `:help rex-nvim-config`.
 
 ## The sidebar and its daemon
 
@@ -252,7 +255,7 @@ daemon and temp state, and exits 1 if any check fails.
   bindings. If `cmd+e`/`cmd+o` were already bound in `init.lua`, rex-nvim
   leaves them alone (by design); choose other keys in `setup{ keys = … }`.
 
-## Deviations from herdr-nvim
+## Deviations from [herdr-nvim](https://github.com/ChmaraX/herdr-nvim)
 
 - **No ctrl+click / open-link.** Rex renders links in its client with no
   plugin hook, so there is nothing to intercept; `cmd+o` and the picker cover
