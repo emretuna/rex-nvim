@@ -83,6 +83,14 @@ The nvim half installs with lazy.nvim:
 Working from a local checkout instead? Point lazy at it:
 `{ dir = "~/Code/rex-nvim", opts = {} }`.
 
+With Neovim ≥ 0.12 you can use the built-in `vim.pack` instead of lazy.nvim
+(`setup()` enables the `<leader>a` keymaps, same as lazy's `opts`):
+
+```lua
+vim.pack.add({ "https://github.com/emretuna/rex-nvim" })
+require("rex-nvim").setup({})
+```
+
 The sidebar daemon injects its own runtimepath, so the Rex half works without
 a plugin manager; the nvim plugin is what provides `:Rex` and the comments.
 
