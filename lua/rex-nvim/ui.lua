@@ -167,6 +167,10 @@ function M.undecorate(id)
 end
 
 function M.comment_row(c)
+  if c.diff then
+    local name = c.file ~= "" and vim.fn.fnamemodify(c.file, ":t") or c.label
+    return string.format("%s  %s", name, c.text)
+  end
   return string.format("%s:%d-%d  %s", vim.fn.fnamemodify(c.file, ":t"), c.start_line, c.end_line, c.text)
 end
 

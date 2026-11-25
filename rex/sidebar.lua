@@ -33,6 +33,7 @@ M.STOP_QUIT_DEADLINE = 10
 M.UNSTICK_TIMEOUT = 2
 M.OPEN_TIMEOUT = 10
 M.OPEN_RETRY_TIMEOUT = 5
+M.COMMAND_TIMEOUT = 10
 M.KILL_WAIT = 2
 M.RATIO = 0.5
 
@@ -364,7 +365,9 @@ function M.ensure_open(state)
   return sidebar
 end
 
-function M.toggle(ctx)
+-- Supervisor + view + window + state file: the shared prefix of every
+-- "do something in this window's sidebar" action.
+local function resolve_state(ctx)
   local session_id = (ctx and ctx.session_id) or rex.session_id
   local block_id = ctx and ctx.block_id
   local sup_ok, sup_err = util.ensure_supervisor()
@@ -374,23 +377,29 @@ function M.toggle(ctx)
   local window = (block_id and util.window_for_block(view, block_id))
     or util.find_window(view, view.active_window_id)
   if not window then return nil, "the session has no windows" end
-  local state = M.state(session_id, window.window_id, block_id)
+  return M.state(session_id, window.window_id, block_id), nil, window
+end
+
+function M.toggle(ctx)
+  local block_id = ctx and ctx.block_id
+  local state, err, window = resolve_state(ctx)
+  if not state then return nil, err end
   local sidebar = state.sidebar_block_id
   if sidebar and util.block_in_window(window, sidebar) then
     local _, derr = rex.session.detach_block({
       block_id = sidebar,
-      session_id = session_id,
+      session_id = state.session_id,
     })
     if derr then return nil, "could not hide the sidebar: " .. tostring(derr) end
     -- Keep sidebar_block_id: the detached block (and its daemon) is what the
     -- next toggle reattaches. The supervisor clears it if the block closes.
     local back = block_id
     if not back or back == sidebar or not util.block_in_window(window, back) then
-      local fresh = util.view(session_id)
-      local after = fresh and util.find_window(fresh, window.window_id)
+      local fresh = util.view(state.session_id)
+      local after = fresh and util.find_window(fresh, state.window_id)
       back = after and after.focused_block_id
     end
-    if back then rex.session.focus_block({ block_id = back, session_id = session_id }) end
+    if back then rex.session.focus_block({ block_id = back, session_id = state.session_id }) end
     return { key = state.key, visible = false, block_id = sidebar }
   end
   local ok, oerr = M.ensure_daemon(state)
@@ -398,6 +407,29 @@ function M.toggle(ctx)
   local opened, open_err = M.ensure_open(state)
   if not opened then return nil, open_err end
   return { key = state.key, visible = true, block_id = opened }
+end
+
+-- Run a nvim command line (no leading colon) in the window's sidebar,
+-- showing the pane first. cd to the calling pane's cwd so repo-scoped
+-- commands like :Neogit or :DiffviewOpen target the pane's repository.
+function M.run_command(ctx, command)
+  if type(command) ~= "string" or command == "" then
+    return nil, "command is required (a nvim command line without the leading colon)"
+  end
+  local state, err = resolve_state(ctx)
+  if not state then return nil, err end
+  local ok, derr = M.ensure_daemon(state)
+  if not ok then return nil, derr end
+  local opened, oerr = M.ensure_open(state)
+  if not opened then return nil, oerr end
+  local cwd = M.cwd_for(state.session_id, ctx and ctx.block_id)
+  local expr = "[nvim_command('cd ' . fnameescape('" .. cwd:gsub("'", "''")
+    .. "')), nvim_command('" .. command:gsub("'", "''") .. "')]"
+  local r = eval_expr(state, expr, M.COMMAND_TIMEOUT)
+  if not r or not r.ok then
+    return nil, "could not run :" .. command .. " in the sidebar nvim: " .. reason(r)
+  end
+  return { key = state.key, block_id = opened, command = command }
 end
 
 -- Opening files -------------------------------------------------------------

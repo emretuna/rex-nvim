@@ -113,6 +113,74 @@ end
 
 M.pick = pick
 
+local function command_split(ctx, args)
+  local session_id = (ctx and ctx.session_id) or rex.session_id
+  -- direction/side/ratio are validated by new_split's input checks.
+  local direction = args.direction or "horizontal"
+  local side = args.side or "after"
+  local ratio = args.ratio or 0.5
+  local cwd = sidebar.cwd_for(session_id, ctx and ctx.block_id)
+  local nvim_bin = util.config().sidebar.nvim_bin
+  -- Launch via the flavor's default login shell (like rex split and the
+  -- original neogit_split): the rc PATH resolves a bare nvim_bin and stays
+  -- intact for the toolchains nvim spawns. A shell="none" pane would report
+  -- its login wrapper as the foreground with no cwd, breaking chained presses.
+  local command = { nvim_bin, "-c", args.command }
+  local r, err = rex.session.new_split({
+    anchor_id = ctx and ctx.block_id,
+    direction = direction,
+    side = side,
+    ratio = ratio,
+    focus = true,
+    session_id = session_id,
+    layout = rex.layout.block({
+      flavor = M.SHELL,
+      options = {
+        command = command,
+        cwd = cwd,
+      },
+    }),
+  })
+  if not r then error("rex-nvim: could not open the split: " .. tostring(err), 0) end
+  return { block_id = r.block_ids and r.block_ids[1], view = "split" }
+end
+
+-- Toggle records for command splits: one file per window mapping each
+-- command to the split it last opened. With toggle=true the next press in
+-- that window closes the split instead of stacking another one; a record
+-- whose block is gone (closed by hand) falls through to a fresh open.
+local function command_records_path(session_id, window_id)
+  return util.state_path("cmd_" .. util.key(session_id, window_id))
+end
+
+local function command_split_toggled(ctx, args)
+  local session_id = (ctx and ctx.session_id) or rex.session_id
+  local block_id = ctx and ctx.block_id
+  local view, verr = util.view(session_id)
+  if not view then error("rex-nvim: could not read the session view: " .. tostring(verr), 0) end
+  local window = (block_id and util.window_for_block(view, block_id))
+    or util.find_window(view, view.active_window_id)
+  if not window then error("rex-nvim: the session has no windows", 0) end
+  local path = command_records_path(session_id, window.window_id)
+  local records = util.read_json(path) or {}
+  local rec = records[args.command]
+  if rec and rec.block_id and util.block_in_window(window, rec.block_id) then
+    local r, cerr = rex.call("block.close", { session_id = session_id, block_id = rec.block_id })
+    if not r then error("rex-nvim: could not close the split: " .. tostring(cerr), 0) end
+    records[args.command] = nil
+    util.write_json_atomic(path, records)
+    local back = rec.origin_block_id
+    if back and back ~= rec.block_id and util.block_in_window(window, back) then
+      rex.session.focus_block({ block_id = back, session_id = session_id })
+    end
+    return { view = "split", closed = true, block_id = rec.block_id }
+  end
+  local result = command_split(ctx, args)
+  records[args.command] = { block_id = result.block_id, origin_block_id = block_id }
+  util.write_json_atomic(path, records)
+  return result
+end
+
 function M.setup(opts)
   opts = opts or {}
   local root = opts.root or util.root()
@@ -192,6 +260,46 @@ function M.setup(opts)
     category = "rex-nvim",
     run = function(ctx)
       return agents.list(ctx and ctx.session_id)
+    end,
+  })
+
+  rex.action({
+    name = "rex_nvim_command",
+    title = "rex-nvim: Run nvim Command",
+    description = "Run a nvim command line in a new split or the window's sidebar. toggle=true closes the split this command last opened in the window instead of opening another.",
+    category = "rex-nvim",
+    args = {
+      type = "object",
+      properties = {
+        command = { type = "string" },
+        view = { type = "string", enum = { "split", "sidebar" } },
+        direction = { type = "string", enum = { "horizontal", "vertical" } },
+        side = { type = "string", enum = { "before", "after" } },
+        ratio = { type = "number", exclusiveMinimum = 0, exclusiveMaximum = 1 },
+        toggle = { type = "boolean" },
+      },
+      required = { "command" },
+      additionalProperties = false,
+    },
+    run = function(ctx, args)
+      -- The running server does not enforce the args schema's required/enum
+      -- keywords; guard them here so bad args fail before any side effect.
+      if type(args.command) ~= "string" or args.command == "" then
+        error("rex-nvim: command is required (a nvim command line without the leading colon)", 0)
+      end
+      local view = args.view or "split"
+      if view ~= "split" and view ~= "sidebar" then
+        error('rex-nvim: view must be "split" or "sidebar"', 0)
+      end
+      if view == "sidebar" then
+        local result, err = sidebar.run_command(ctx, args.command)
+        if not result then error(err or "rex-nvim: could not run the command", 0) end
+        return result
+      end
+      if args.toggle then
+        return command_split_toggled(ctx, args)
+      end
+      return command_split(ctx, args)
     end,
   })
 

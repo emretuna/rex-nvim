@@ -31,6 +31,18 @@ Two halves in one repo:
 - **Code annotations you send to the agent.** Comment a line or a visual
   selection like a code review, list them, then paste or submit them to any
   agent in the session — with `file:line`, snippets and git context.
+- **Diff views, annotated too.** Comment a hunk in diffview.nvim,
+  gitsigns.nvim, fugitive or Neogit: the built-in resolvers find the file
+  behind the view, the comment is snapshotted so closing the view never loses
+  it, and the agent receives `path (diff, kind)` with the full selected diff
+  text. Unknown plugins and scratch buffers degrade to an honest label — never
+  a pseudo-path; `setup{ diff = { resolvers = { fn } } }` adds your own
+  resolver.
+- **Git UIs on your own keys.** `rex_nvim_command` runs any nvim command line
+  in a new terminal split or the window's sidebar, with `direction`, `side` and
+  `ratio` geometry args. `toggle = true` makes a split binding a toggle: the
+  next press closes the split it opened (per window) instead of stacking
+  another. No default binding: you choose the key and the UI.
 - **Inline `path:12-20` references.** Drop a bare reference into the agent's
   input in the middle of a sentence; never submits, never touches pending
   comments.
@@ -88,7 +100,9 @@ With Neovim ≥ 0.12 you can use the built-in `vim.pack` instead of lazy.nvim
 
 ```lua
 vim.pack.add({ "https://github.com/emretuna/rex-nvim" })
-require("rex-nvim").setup({})
+require("rex-nvim").setup({
+  -- diff = { resolvers = { my_resolver } }, -- extra resolvers, tried first
+})
 ```
 
 The sidebar daemon injects its own runtimepath, so the Rex half works without
@@ -109,6 +123,15 @@ a plugin manager; the nvim plugin is what provides `:Rex` and the comments.
 The Rex keys are never bound over an existing `init.lua` binding. Pass
 `setup{ keys = { toggle = "…", pick = "…" } }` to choose others, or `false` to
 skip one. The nvim-side keys are configurable — see `:help rex-nvim-config`.
+
+Git UIs are user-bound, not default keys: `rex_nvim_command` takes a `command`
+line plus `view` (`split` or `sidebar`) and geometry args. In
+`~/.config/rex/init.lua`, after the setup marker:
+
+```lua
+rex.bind("cmd+g", "rex_nvim_command", { command = "DiffviewOpen", view = "split", toggle = true })
+rex.bind("shift+cmd+g", "rex_nvim_command", { command = "Neogit", view = "sidebar" })
+```
 
 ## Navigation
 
@@ -220,6 +243,21 @@ shortened against the receiving agent's cwd; a file outside it stays absolute.
 A buffer with no file name is refused; unsaved changes warn (the agent reads
 the file on disk) but still send.
 
+Diff views are first-class too. Any buffer that is not a real file — diffview's
+`diffview://` side, gitsigns revision buffers, fugitive blobs, Neogit's
+`NeogitStatus` hunks, a bare scratch — can be commented: built-in resolvers
+find the file behind the view, and the comment is snapshotted at capture, so
+it survives the view being closed or wiped and reaches the agent as
+`path (diff, working)` with the full selected diff text (no 3-line cap). When
+nothing resolves, the comment still sends, labelled by scheme, filetype or
+buftype instead of a pseudo-path. References on those buffers are refused —
+comment the change instead; the `@@` headers carry the lines.
+
+Anything else: `setup{ diff = { resolvers = { fn } } }`, where
+`fn(bufnr, name) -> { path?, label } | nil` with `label` required. User
+resolvers run before the built-ins (pcall-guarded, first non-nil wins), so one
+function supports another plugin or overrides a built-in.
+
 `:Rex comment|list|send|submit|ref` mirrors the keys with ranges, and
 `require("rex-nvim").statusline()` returns `""` or `"● N"` for a statusline
 component.
@@ -253,8 +291,8 @@ Invalid `nvim_env` entries (keys must be ASCII alphanumerics or `_`) are
 skipped with a warning. `nvim_env` applies to the daemon, the sidebar pane and
 every probe.
 
-The nvim plugin's options (`prefix`, `keymaps`, `clear_after_send`) are
-documented in `:help rex-nvim-config`.
+The nvim plugin's options (`prefix`, `keymaps`, `clear_after_send`,
+`diff.resolvers`) are documented in `:help rex-nvim-config`.
 
 ## Doctor
 

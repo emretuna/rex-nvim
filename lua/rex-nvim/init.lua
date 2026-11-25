@@ -5,8 +5,9 @@ local agents = require("rex-nvim.agents")
 local dispatch = require("rex-nvim.dispatch")
 local ui = require("rex-nvim.ui")
 local nav = require("rex-nvim.nav")
+local diff = require("rex-nvim.diff")
 
-M.config = { prefix = "<leader>a", keymaps = true, clear_after_send = true, resize = { amount = 3 } }
+M.config = { prefix = "<leader>a", keymaps = true, clear_after_send = true, resize = { amount = 3 }, diff = { resolvers = {} } }
 
 -- Callback of each default keymap this plugin set, by mode and keys. setup()
 -- can run more than once (the sidebar daemon calls it again after the user's
@@ -50,8 +51,10 @@ end
 -- span is { start_line = n, end_line = n, cols = { start_col, end_col }? }.
 local function comment_span(span)
   local bufnr = vim.api.nvim_get_current_buf()
+  local dctx = diff.context(bufnr)
   ui.input_comment(function(text)
-    local id = comments.add(bufnr, span, text)
+    local snapshot = dctx and comments.make_snapshot(bufnr, span, dctx) or nil
+    local id = comments.add(bufnr, span, text, snapshot)
     ui.decorate(id)
   end)
 end
@@ -158,8 +161,10 @@ function M.send_all(opts)
   for _, c in ipairs(list) do
     table.insert(items, { comment = c, snippet = comments.snippet(c.id) })
   end
-  local first_file = list[1].file
-  local cwd = first_file ~= "" and vim.fn.fnamemodify(first_file, ":h") or nil
+  local cwd
+  for _, c in ipairs(list) do
+    if c.file ~= "" then cwd = vim.fn.fnamemodify(c.file, ":h") break end
+  end
   local header_context = M._git_context(cwd)
   deliver_to_agent(function(agent)
     return prompt.format(items, { header_context = header_context, cwd = agent.cwd })
@@ -182,6 +187,11 @@ function M.ref_range(start_line, end_line)
   local file = vim.api.nvim_buf_get_name(bufnr)
   if file == "" then
     vim.notify("rex-nvim: buffer has no file to reference", vim.log.levels.WARN)
+    return
+  end
+  if diff.context(bufnr) then
+    vim.notify("rex-nvim: this buffer has no file lines to reference — comment the change instead",
+      vim.log.levels.WARN)
     return
   end
   local item = { file = file, start_line = start_line, end_line = end_line }

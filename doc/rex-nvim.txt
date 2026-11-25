@@ -182,8 +182,26 @@ rex-nvim.setup({opts}) ~
     prefix = "<leader>a",     -- prefix for the default keymaps
     keymaps = true,           -- set false to bind your own
     clear_after_send = true,  -- clear comments after a successful send
+    diff = { resolvers = {} } -- custom resolvers, tried before the built-ins
   })
 <
+
+Diff-aware comments: ~
+
+Any buffer that is not a real file can be commented: diff views, git panels,
+scratch buffers. Built-in resolvers find the file behind diffview.nvim's
+left and right sides, gitsigns.nvim revision buffers, fugitive blobs and
+Neogit's `NeogitStatus` hunks; anything else degrades to an honest label (its
+scheme, filetype or buftype), never a pseudo-path. A comment on such a buffer
+is snapshotted at capture, so it survives the view being closed or wiped, and
+reaches the agent as `path (diff, kind)` — just the label when no path
+resolves — with the full selected diff text, not a three-line snippet.
+References are refused there: comment the change instead.
+
+A resolver is `fn(bufnr, name) -> { path?, label } | nil` with `label`
+required. `diff.resolvers` entries run before the built-ins, pcall-guarded;
+the first non-nil result wins, so you can support another plugin or override
+a built-in.
 
 Suggested keymaps: ~
 
@@ -307,7 +325,10 @@ rex-nvim.send_all({opts}) ~
   is shortened against the receiving agent's cwd (a file outside it stays
   absolute), and a single line collapses to `path:12`, the same spelling as
   |rex-nvim.ref_range()|. A span inside one line is `path:12:5-9`
-  (1-indexed byte columns, inclusive) and sends only the selected text.
+  (1-indexed byte columns, inclusive) and sends only the selected text. A
+  comment captured in a diff view or other non-file buffer renders as
+  `path (diff, kind)` and carries the full selected diff text instead of a
+  three-line snippet.
   Parameters: ~
     {opts} (`table`) Options:
     - `submit` (`boolean`, default false): when true, auto-submits the text
@@ -323,9 +344,10 @@ rex-nvim.ref_range({start_line}, {end_line}) ~
   git context. A single-line range collapses to `path:12`. The path is
   shortened against the cwd of the agent that receives it; a file outside
   that cwd keeps its absolute path. Never submits, and never touches pending
-  comments. A buffer with no file name is refused with a warning; a buffer
-  with unsaved changes warns (the agent reads the file on disk) but still
-  sends.
+  comments. A buffer with no file name is refused with a warning, and so is
+  any non-file buffer (a diff view, a git panel): comment the change instead.
+  A buffer with unsaved changes warns (the agent reads the file on disk) but
+  still sends.
   Parameters: ~
     {start_line} (`integer`) First line of the range.
     {end_line} (`integer`) Last line of the range (inclusive).

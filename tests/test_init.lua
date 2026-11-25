@@ -143,6 +143,7 @@ T.test("init: send_all formats, dispatches, clears", function()
   local b = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(b, 0, -1, false, { "alpha" })
   vim.api.nvim_buf_set_name(b, "/tmp/hn-send.lua")
+  vim.bo[b].buftype = ""
   comments.add(b, { start_line = 1, end_line = 1 }, "check this")
 
   local ui = require("rex-nvim.ui")
@@ -170,6 +171,7 @@ T.test("init: send_all warns once when the resolved agent is working", function(
   local b = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(b, 0, -1, false, { "alpha" })
   vim.api.nvim_buf_set_name(b, "/tmp/hn-send-working.lua")
+  vim.bo[b].buftype = ""
   comments.add(b, { start_line = 1, end_line = 1 }, "check this")
 
   local ui = require("rex-nvim.ui")
@@ -194,6 +196,7 @@ T.test("init: send_all shows the picker when agents are ambiguous", function()
   local b = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(b, 0, -1, false, { "alpha" })
   vim.api.nvim_buf_set_name(b, "/tmp/hn-send-multi.lua")
+  vim.bo[b].buftype = ""
   comments.add(b, { start_line = 1, end_line = 1 }, "check this")
 
   local ui = require("rex-nvim.ui")
@@ -225,6 +228,7 @@ T.test("init: send_all skips the picker for a lone agent", function()
   local b = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(b, 0, -1, false, { "alpha" })
   vim.api.nvim_buf_set_name(b, "/tmp/hn-send-solo.lua")
+  vim.bo[b].buftype = ""
   comments.add(b, { start_line = 1, end_line = 1 }, "check this")
 
   local ui = require("rex-nvim.ui")
@@ -248,6 +252,7 @@ T.test("init: send_all retains comments when dispatch.send fails", function()
   local b = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(b, 0, -1, false, { "alpha" })
   vim.api.nvim_buf_set_name(b, "/tmp/hn-send-fail.lua")
+  vim.bo[b].buftype = ""
   comments.add(b, { start_line = 1, end_line = 1 }, "check this")
 
   local ui = require("rex-nvim.ui")
@@ -279,6 +284,7 @@ T.test("init: ref_range sends a bare citation, never submits, keeps comments", f
   local b = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(b, 0, -1, false, { "a", "b", "c", "d" })
   vim.api.nvim_buf_set_name(b, "/repo/lua/hn-ref.lua")
+  vim.bo[b].buftype = ""
   vim.api.nvim_set_current_buf(b)
   comments.add(b, { start_line = 1, end_line = 1 }, "keep me")
 
@@ -304,6 +310,7 @@ T.test("init: ref_range shortens against the picked agent's cwd, not the buffer'
   local b = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(b, 0, -1, false, { "a" })
   vim.api.nvim_buf_set_name(b, "/repo/deep/x.lua")
+  vim.bo[b].buftype = ""
   vim.api.nvim_set_current_buf(b)
 
   local ui = require("rex-nvim.ui")
@@ -379,6 +386,7 @@ T.test("init: ref_line and ref_selection resolve their own span", function()
   local b = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(b, 0, -1, false, { "a", "b", "c", "d" })
   vim.api.nvim_buf_set_name(b, "/repo/span.lua")
+  vim.bo[b].buftype = ""
   vim.api.nvim_set_current_buf(b)
   vim.api.nvim_win_set_cursor(0, { 3, 0 })
 

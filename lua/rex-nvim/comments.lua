@@ -1,11 +1,21 @@
 local M = {}
 M.ns = vim.api.nvim_create_namespace("rex-nvim-comments")
-local store = {} -- id -> { bufnr, extmark, text, created_at, has_cols }
+local store = {} -- id -> { bufnr, extmark, text, created_at, has_cols, snapshot? }
 local next_id = 1
+
+-- The live buffer text covered by a span. Shared by snippet() and by
+-- make_snapshot(), which freezes the selection at capture time.
+local function span_text(bufnr, span)
+  if span.cols then
+    -- Exact selected text across the span (partial first/last line included).
+    return vim.api.nvim_buf_get_text(bufnr, span.start_line - 1, span.cols[1], span.end_line - 1, span.cols[2], {})
+  end
+  return vim.api.nvim_buf_get_lines(bufnr, span.start_line - 1, span.end_line, false)
+end
 
 -- span is { start_line = n, end_line = n, cols = { start_col, end_col }? }.
 -- Columns are 0-indexed bytes and end-exclusive.
-function M.add(bufnr, span, text)
+function M.add(bufnr, span, text, snapshot)
   local id = next_id
   next_id = next_id + 1
   local has_cols = span.cols ~= nil
@@ -28,13 +38,25 @@ function M.add(bufnr, span, text)
       end_right_gravity = true,
     })
   end
-  store[id] = { bufnr = bufnr, extmark = extmark, text = text, created_at = os.time(), has_cols = has_cols }
+  store[id] = { bufnr = bufnr, extmark = extmark, text = text, created_at = os.time(), has_cols = has_cols, snapshot = snapshot }
   return id
+end
+
+-- Freeze the text a non-file buffer comment refers to: the buffer itself may be
+-- wiped (diff views are bufhidden=wipe) long before the comment is sent.
+function M.make_snapshot(bufnr, span, dctx)
+  return { file = dctx.path or "", label = dctx.label, lines = span_text(bufnr, span), span = span }
 end
 
 local function resolve(id)
   local e = store[id]
-  if not e or not vim.api.nvim_buf_is_valid(e.bufnr) then return nil end
+  if not e then return nil end
+  if e.snapshot then
+    return { id = id, bufnr = e.bufnr, file = e.snapshot.file, label = e.snapshot.label,
+      diff = true, start_line = e.snapshot.span.start_line, end_line = e.snapshot.span.end_line,
+      text = e.text, created_at = e.created_at }
+  end
+  if not vim.api.nvim_buf_is_valid(e.bufnr) then return nil end
   local pos = vim.api.nvim_buf_get_extmark_by_id(e.bufnr, M.ns, e.extmark, { details = true })
   if not pos or #pos == 0 then return nil end
   local start_line = pos[1] + 1
@@ -100,11 +122,8 @@ end
 function M.snippet(id)
   local c = resolve(id)
   if not c then return nil end
-  if c.cols then
-    -- Exact selected text across the span (partial first/last line included).
-    return vim.api.nvim_buf_get_text(c.bufnr, c.start_line - 1, c.cols[1], c.end_line - 1, c.cols[2], {})
-  end
-  return vim.api.nvim_buf_get_lines(c.bufnr, c.start_line - 1, c.end_line, false)
+  if c.diff then return store[id].snapshot.lines end
+  return span_text(c.bufnr, c)
 end
 
 return M
