@@ -7,6 +7,7 @@
 local util = require("rex-nvim.util")
 local sidebar = require("rex-nvim.sidebar")
 local agents = require("rex-nvim.agents")
+local nav = require("rex-nvim.nav")
 
 local M = {}
 
@@ -32,7 +33,7 @@ local function local_binding(key, action)
   return nil
 end
 
-local function bind_unless_taken(key, action)
+local function bind_unless_taken(key, action, args)
   if key == false or key == nil or key == "" then return false end
   local existing = local_binding(key, action)
   if existing then
@@ -40,7 +41,7 @@ local function bind_unless_taken(key, action)
       key, tostring(existing.action or "a function")))
     return false
   end
-  rex.bind(key, action)
+  rex.bind(key, action, args)
   return true
 end
 
@@ -120,6 +121,7 @@ function M.setup(opts)
   end
   util.set_root(root)
   if opts.bin then util.set_bin(opts.bin) end
+  nav.configure({ resize_amount = opts.resize_amount })
 
   local keys = opts.keys or {}
   local toggle_key = keys.toggle
@@ -193,8 +195,53 @@ function M.setup(opts)
     end,
   })
 
+  rex.action({
+    name = "rex_nvim_nav",
+    title = "rex-nvim: Move Focus",
+    description = "Move focus between nvim splits and Rex panes.",
+    category = "rex-nvim",
+    args = { direction = "string" },
+    run = function(ctx, args)
+      local result = nav.move(ctx, args.direction)
+      if not result then error("rex-nvim: could not move focus", 0) end
+      return result
+    end,
+  })
+
+  rex.action({
+    name = "rex_nvim_resize",
+    title = "rex-nvim: Resize Pane",
+    description = "Resize the split on the given side by an amount of cells.",
+    category = "rex-nvim",
+    args = {
+      direction = "string",
+      amount = "integer?",
+      block_id = "string?",
+      mux = "boolean?",
+    },
+    run = function(ctx, args)
+      local result = nav.resize(ctx, args)
+      if not result then error("rex-nvim: could not resize the pane", 0) end
+      return result
+    end,
+  })
+
+  local function key_or(name, default)
+    local key = keys[name]
+    if key == nil then return default end
+    return key
+  end
+
   bind_unless_taken(toggle_key, "rex_nvim_toggle")
   bind_unless_taken(pick_key, "rex_nvim_pick")
+  bind_unless_taken(key_or("nav_left", "ctrl+h"), "rex_nvim_nav", { direction = "left" })
+  bind_unless_taken(key_or("nav_down", "ctrl+j"), "rex_nvim_nav", { direction = "down" })
+  bind_unless_taken(key_or("nav_up", "ctrl+k"), "rex_nvim_nav", { direction = "up" })
+  bind_unless_taken(key_or("nav_right", "ctrl+l"), "rex_nvim_nav", { direction = "right" })
+  bind_unless_taken(key_or("resize_left", "alt+h"), "rex_nvim_resize", { direction = "left" })
+  bind_unless_taken(key_or("resize_down", "alt+j"), "rex_nvim_resize", { direction = "down" })
+  bind_unless_taken(key_or("resize_up", "alt+k"), "rex_nvim_resize", { direction = "up" })
+  bind_unless_taken(key_or("resize_right", "alt+l"), "rex_nvim_resize", { direction = "right" })
   return M
 end
 

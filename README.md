@@ -110,6 +110,38 @@ The Rex keys are never bound over an existing `init.lua` binding. Pass
 `setup{ keys = { toggle = "…", pick = "…" } }` to choose others, or `false` to
 skip one. The nvim-side keys are configurable — see `:help rex-nvim-config`.
 
+## Navigation
+
+smart-splits.nvim-style navigation, so you can use `require('rex-nvim')` in
+place of `require('smart-splits')` in your keymaps:
+
+```lua
+require("rex-nvim").setup({ resize = { amount = 3 } })
+
+-- resizing splits, these accept a count, so 10<A-h> resizes by 10 * config.resize.amount
+vim.keymap.set('n', '<A-h>', require('rex-nvim').resize_left)
+vim.keymap.set('n', '<A-j>', require('rex-nvim').resize_down)
+vim.keymap.set('n', '<A-k>', require('rex-nvim').resize_up)
+vim.keymap.set('n', '<A-l>', require('rex-nvim').resize_right)
+-- moving between splits
+vim.keymap.set('n', '<C-h>', require('rex-nvim').move_cursor_left)
+vim.keymap.set('n', '<C-j>', require('rex-nvim').move_cursor_down)
+vim.keymap.set('n', '<C-k>', require('rex-nvim').move_cursor_up)
+vim.keymap.set('n', '<C-l>', require('rex-nvim').move_cursor_right)
+```
+
+At an nvim split edge, a move focuses the adjacent Rex pane and a resize
+resizes the Rex split. `setup()` on the Rex side binds `ctrl+h/j/k/l` (move)
+and `alt+h/j/k/l` (resize) for you and forwards them into the sidebar nvim
+when it is focused, so navigation works both ways. Existing `init.lua`
+bindings are never overridden; pass
+`setup{ keys = { nav_left = "…", nav_down = false, … } }` to choose others, or
+`false` to skip one. The Rex-side resize step is `setup{ resize_amount = N }`
+(default 3).
+
+Resize acts on the pane's immediate split border; at the window edge it is a
+no-op.
+
 ## The sidebar and its daemon
 
 The visible pane is `nvim --server <socket> --remote-ui`; the real nvim runs

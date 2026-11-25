@@ -4,8 +4,9 @@ local prompt = require("rex-nvim.prompt")
 local agents = require("rex-nvim.agents")
 local dispatch = require("rex-nvim.dispatch")
 local ui = require("rex-nvim.ui")
+local nav = require("rex-nvim.nav")
 
-M.config = { prefix = "<leader>a", keymaps = true, clear_after_send = true }
+M.config = { prefix = "<leader>a", keymaps = true, clear_after_send = true, resize = { amount = 3 } }
 
 -- Callback of each default keymap this plugin set, by mode and keys. setup()
 -- can run more than once (the sidebar daemon calls it again after the user's
@@ -208,6 +209,17 @@ function M.ref_line()
   local l = vim.api.nvim_win_get_cursor(0)[1]
   M.ref_range(l, l)
 end
+
+-- smart-splits-compatible navigation and resizing (see nav.lua). Keymaps are
+-- the user's choice, exactly like smart-splits: no defaults are installed.
+M.move_cursor_left = nav.move_cursor_left
+M.move_cursor_down = nav.move_cursor_down
+M.move_cursor_up = nav.move_cursor_up
+M.move_cursor_right = nav.move_cursor_right
+M.resize_left = nav.resize_left
+M.resize_down = nav.resize_down
+M.resize_up = nav.resize_up
+M.resize_right = nav.resize_right
 
 function M.statusline()
   local n = #comments.list()

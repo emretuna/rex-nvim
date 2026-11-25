@@ -46,6 +46,8 @@ local function send_keys(state, keys, timeout)
     { timeout = timeout })
 end
 
+M.send_keys = send_keys
+
 -- Connection failures and vim errors both exit non-zero; tell them apart.
 local function classify(r)
   if r == nil then return "gone" end
