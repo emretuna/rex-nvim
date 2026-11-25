@@ -40,9 +40,9 @@ Two halves in one repo:
   resolver.
 - **Git UIs on your own keys.** `rex_nvim_command` runs any nvim command line
   in a new terminal split or the window's sidebar, with `direction`, `side` and
-  `ratio` geometry args. `toggle = true` makes a split binding a toggle: the
-  next press closes the split it opened (per window) instead of stacking
-  another. No default binding: you choose the key and the UI.
+  `ratio` geometry args. Toggle is the default: the next press closes the
+  split it opened (per window) or hides a visible sidebar; `toggle = false`
+  opts out. No default binding: you choose the key and the UI.
 - **Inline `path:12-20` references.** Drop a bare reference into the agent's
   input in the middle of a sentence; never submits, never touches pending
   comments.
@@ -129,7 +129,7 @@ line plus `view` (`split` or `sidebar`) and geometry args. In
 `~/.config/rex/init.lua`, after the setup marker:
 
 ```lua
-rex.bind("cmd+g", "rex_nvim_command", { command = "DiffviewOpen", view = "split", toggle = true })
+rex.bind("cmd+g", "rex_nvim_command", { command = "DiffviewOpen", view = "split" })
 rex.bind("shift+cmd+g", "rex_nvim_command", { command = "Neogit", view = "sidebar" })
 ```
 

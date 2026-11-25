@@ -34,6 +34,7 @@ M.UNSTICK_TIMEOUT = 2
 M.OPEN_TIMEOUT = 10
 M.OPEN_RETRY_TIMEOUT = 5
 M.COMMAND_TIMEOUT = 10
+M.LOCK_WAIT = 25
 M.KILL_WAIT = 2
 M.RATIO = 0.5
 
@@ -173,6 +174,8 @@ function M.spawn_daemon(state)
     state.nvim_bin,
     "--headless",
     "--listen", state.socket,
+    "--cmd", "if exists('+messagesopt') | set messagesopt=history:500,wait:0 | endif",
+    "--cmd", "set nomore",
     "--cmd", "set rtp+=" .. vim_path_escape(root),
     "--cmd", "lua vim.api.nvim_create_autocmd('VimEnter',{callback=function() pcall(function() "
       .. "vim.opt.rtp:append('" .. lua_quote(root) .. "'); require('rex-nvim').setup() end) end})",
@@ -197,14 +200,59 @@ function M.spawn_daemon(state)
     .. tostring(M.START_DEADLINE) .. "s; see " .. util.log_path("finisher.log")
 end
 
+-- Per-key mutex for the daemon/pane/command critical sections. Two rapid
+-- presses must not double-spawn nvim on one socket nor queue heavy commands
+-- until a client times out. Plain mkdir is atomic; LOCK_WAIT outlasts the
+-- worst-case holder (spawn + command), so takeover only hits crashed holders.
+local function with_key_lock(state, fn)
+  local lock = util.state_dir() .. "/" .. state.key .. ".lock"
+  local deadline_at = util.now() + M.LOCK_WAIT
+  while true do
+    local r = util.exec({ "mkdir", lock }, { timeout = 5 })
+    if r and r.ok then break end
+    if util.now() > deadline_at then
+      os.remove(lock)
+      local r2 = util.exec({ "mkdir", lock }, { timeout = 5 })
+      if r2 and r2.ok then break end
+      return nil, "another rex-nvim action is busy on " .. tostring(state.key)
+    end
+    util.sleep(0.1)
+  end
+  local ok, a, b = pcall(fn)
+  os.remove(lock)
+  if not ok then error(a, 0) end
+  return a, b
+end
+
+M.with_key_lock = with_key_lock
+
+-- Read-modify-write strictly under the lock: merge the persisted mutable
+-- fields onto the action's state copy so a save never clobbers a field a
+-- concurrent locked action just wrote.
+local function refresh_state(state)
+  local fresh = util.read_json(util.state_path(state.key))
+  if fresh then
+    state.pid = fresh.pid
+    state.sidebar_block_id = fresh.sidebar_block_id
+    state.cwd = fresh.cwd or state.cwd
+    state.origin_block_id = fresh.origin_block_id or state.origin_block_id
+    state.ratio = fresh.ratio or state.ratio
+  end
+  return state
+end
+
 -- Health gate: never spawn a second nvim on top of one that is answering.
-function M.ensure_daemon(state)
+-- Caller holds the key lock (M.ensure_daemon / M.run_command wrap it).
+local function ensure_daemon_locked(state)
+  refresh_state(state)
+  -- A live recorded pid is authoritative: adopt, report, or unstick -- never
+  -- spawn a second nvim on top of one that is merely busy.
   if state.pid and util.kill0(state.pid) then
     local health, detail = M.probe(state, M.PROBE_FIRST_TIMEOUT)
     if health == "answered" then return adopt(state, detail) end
     if health == "error" then return nil, daemon_error(state, detail) end
     if health == "unresponsive" then
-      send_keys(state, "<C-\\><C-n>", M.UNSTICK_TIMEOUT)
+      send_keys(state, "<C-\\><C-n><Esc><C-c><CR>", M.UNSTICK_TIMEOUT)
       local deadline_at = util.now() + M.START_DEADLINE
       while util.now() < deadline_at do
         local remaining = deadline_at - util.now()
@@ -218,7 +266,15 @@ function M.ensure_daemon(state)
       if util.kill0(state.pid) then return nil, unresponsive_error(state) end
     end
   end
+  -- No live pid answered: a concurrent press may have spawned one whose pid
+  -- we have not recorded; probe the socket, then spawn if nothing answers.
+  local health, detail = M.probe(state, M.PROBE_FIRST_TIMEOUT)
+  if health == "answered" then return adopt(state, detail) end
   return M.spawn_daemon(state)
+end
+
+function M.ensure_daemon(state)
+  return with_key_lock(state, function() return ensure_daemon_locked(state) end)
 end
 
 -- State ---------------------------------------------------------------------
@@ -300,7 +356,7 @@ local function pane_exited(session_id, block_id)
 end
 
 -- The toggle-ON branch, idempotent: reattach or create, never hide.
-function M.ensure_open(state)
+local function ensure_open_inner(state)
   local view, verr = util.view(state.session_id)
   if not view then return nil, "could not read the session view: " .. tostring(verr) end
   local window = util.find_window(view, state.window_id)
@@ -365,6 +421,17 @@ function M.ensure_open(state)
   return sidebar
 end
 
+-- Refresh state and reattach or create one pane. Caller holds the key lock.
+local function ensure_open_locked(state)
+  refresh_state(state)
+  return ensure_open_inner(state)
+end
+
+-- Serialize pane creation per key: two rapid presses reattach one pane.
+function M.ensure_open(state)
+  return with_key_lock(state, function() return ensure_open_locked(state) end)
+end
+
 -- Supervisor + view + window + state file: the shared prefix of every
 -- "do something in this window's sidebar" action.
 local function resolve_state(ctx)
@@ -380,27 +447,32 @@ local function resolve_state(ctx)
   return M.state(session_id, window.window_id, block_id), nil, window
 end
 
+-- Detach the sidebar pane and restore focus. Keeps sidebar_block_id so the
+-- next show reattaches the same block (and its daemon).
+local function hide_sidebar(state, window, block_id)
+  local sidebar = state.sidebar_block_id
+  local _, derr = rex.session.detach_block({
+    block_id = sidebar,
+    session_id = state.session_id,
+  })
+  if derr then return nil, "could not hide the sidebar: " .. tostring(derr) end
+  local back = block_id
+  if not back or back == sidebar or not util.block_in_window(window, back) then
+    local fresh = util.view(state.session_id)
+    local after = fresh and util.find_window(fresh, state.window_id)
+    back = after and after.focused_block_id
+  end
+  if back then rex.session.focus_block({ block_id = back, session_id = state.session_id }) end
+  return { key = state.key, visible = false, block_id = sidebar }
+end
+
 function M.toggle(ctx)
   local block_id = ctx and ctx.block_id
   local state, err, window = resolve_state(ctx)
   if not state then return nil, err end
   local sidebar = state.sidebar_block_id
   if sidebar and util.block_in_window(window, sidebar) then
-    local _, derr = rex.session.detach_block({
-      block_id = sidebar,
-      session_id = state.session_id,
-    })
-    if derr then return nil, "could not hide the sidebar: " .. tostring(derr) end
-    -- Keep sidebar_block_id: the detached block (and its daemon) is what the
-    -- next toggle reattaches. The supervisor clears it if the block closes.
-    local back = block_id
-    if not back or back == sidebar or not util.block_in_window(window, back) then
-      local fresh = util.view(state.session_id)
-      local after = fresh and util.find_window(fresh, state.window_id)
-      back = after and after.focused_block_id
-    end
-    if back then rex.session.focus_block({ block_id = back, session_id = state.session_id }) end
-    return { key = state.key, visible = false, block_id = sidebar }
+    return hide_sidebar(state, window, block_id)
   end
   local ok, oerr = M.ensure_daemon(state)
   if not ok then return nil, oerr end
@@ -412,24 +484,41 @@ end
 -- Run a nvim command line (no leading colon) in the window's sidebar,
 -- showing the pane first. cd to the calling pane's cwd so repo-scoped
 -- commands like :Neogit or :DiffviewOpen target the pane's repository.
-function M.run_command(ctx, command)
+function M.run_command(ctx, command, toggle)
   if type(command) ~= "string" or command == "" then
     return nil, "command is required (a nvim command line without the leading colon)"
   end
   local state, err = resolve_state(ctx)
   if not state then return nil, err end
-  local ok, derr = M.ensure_daemon(state)
-  if not ok then return nil, derr end
-  local opened, oerr = M.ensure_open(state)
-  if not opened then return nil, oerr end
-  local cwd = M.cwd_for(state.session_id, ctx and ctx.block_id)
-  local expr = "[nvim_command('cd ' . fnameescape('" .. cwd:gsub("'", "''")
-    .. "')), nvim_command('" .. command:gsub("'", "''") .. "')]"
-  local r = eval_expr(state, expr, M.COMMAND_TIMEOUT)
-  if not r or not r.ok then
-    return nil, "could not run :" .. command .. " in the sidebar nvim: " .. reason(r)
-  end
-  return { key = state.key, block_id = opened, command = command }
+  local block_id = ctx and ctx.block_id
+  -- One lock over the whole flow INCLUDING the toggle decision: a second
+  -- press arriving mid-open sees the persisted pane and hides, instead of
+  -- running the command again and leaving the sidebar open.
+  return with_key_lock(state, function()
+    refresh_state(state)
+    local view, verr = util.view(state.session_id)
+    if not view then return nil, "could not read the session view: " .. tostring(verr) end
+    local window = util.find_window(view, state.window_id)
+    if not window then return nil, "window " .. tostring(state.window_id) .. " no longer exists" end
+    if toggle and state.sidebar_block_id and util.block_in_window(window, state.sidebar_block_id) then
+      return hide_sidebar(state, window, block_id)
+    end
+    local ok, derr = ensure_daemon_locked(state)
+    if not ok then return nil, derr end
+    local opened, oerr = ensure_open_locked(state)
+    if not opened then return nil, oerr end
+    local cwd = M.cwd_for(state.session_id, block_id)
+    local expr = "[nvim_command('cd ' . fnameescape('" .. cwd:gsub("'", "''")
+      .. "')), nvim_command('" .. command:gsub("'", "''") .. "')]"
+    local r = eval_expr(state, expr, M.COMMAND_TIMEOUT)
+    if r and r.timed_out then
+      return nil, "timed out running :" .. command .. " in the sidebar nvim (it may be busy)"
+    end
+    if not r or not r.ok then
+      return nil, "could not run :" .. command .. " in the sidebar nvim: " .. reason(r)
+    end
+    return { key = state.key, block_id = opened, command = command }
+  end)
 end
 
 -- Opening files -------------------------------------------------------------
@@ -556,6 +645,8 @@ function M.stop_daemon(key, force)
     if not stats then
       return nil, daemon_error(state, "could not read the daemon's state")
     end
+    -- Kill the socket owner: the recorded pid may be stale (orphan race).
+    state.pid = stats.pid or state.pid
     if (stats.unsaved > 0 or stats.comments > 0) and not force then
       return nil, string.format(
         "%s has %d unsaved buffer(s) and %d pending comment(s); run: rex-nvim daemons stop %s --force",

@@ -161,23 +161,32 @@ local function command_split_toggled(ctx, args)
   local window = (block_id and util.window_for_block(view, block_id))
     or util.find_window(view, view.active_window_id)
   if not window then error("rex-nvim: the session has no windows", 0) end
-  local path = command_records_path(session_id, window.window_id)
-  local records = util.read_json(path) or {}
-  local rec = records[args.command]
-  if rec and rec.block_id and util.block_in_window(window, rec.block_id) then
-    local r, cerr = rex.call("block.close", { session_id = session_id, block_id = rec.block_id })
-    if not r then error("rex-nvim: could not close the split: " .. tostring(cerr), 0) end
-    records[args.command] = nil
-    util.write_json_atomic(path, records)
-    local back = rec.origin_block_id
-    if back and back ~= rec.block_id and util.block_in_window(window, back) then
-      rex.session.focus_block({ block_id = back, session_id = session_id })
+  -- Same per-window lock as the sidebar: a fast double-press must read the
+  -- record the first press persisted and close, not open a second split.
+  local lock_state = { key = util.key(session_id, window.window_id) }
+  local result, lerr = sidebar.with_key_lock(lock_state, function()
+    local fresh_view = util.view(session_id)
+    local w = (fresh_view and util.find_window(fresh_view, window.window_id)) or window
+    local path = command_records_path(session_id, window.window_id)
+    local records = util.read_json(path) or {}
+    local rec = records[args.command]
+    if rec and rec.block_id and util.block_in_window(w, rec.block_id) then
+      local r, cerr = rex.call("block.close", { session_id = session_id, block_id = rec.block_id })
+      if not r then error("rex-nvim: could not close the split: " .. tostring(cerr), 0) end
+      records[args.command] = nil
+      util.write_json_atomic(path, records)
+      local back = rec.origin_block_id
+      if back and back ~= rec.block_id and util.block_in_window(w, back) then
+        rex.session.focus_block({ block_id = back, session_id = session_id })
+      end
+      return { view = "split", closed = true, block_id = rec.block_id }
     end
-    return { view = "split", closed = true, block_id = rec.block_id }
-  end
-  local result = command_split(ctx, args)
-  records[args.command] = { block_id = result.block_id, origin_block_id = block_id }
-  util.write_json_atomic(path, records)
+    local opened = command_split(ctx, args)
+    records[args.command] = { block_id = opened.block_id, origin_block_id = block_id }
+    util.write_json_atomic(path, records)
+    return opened
+  end)
+  if not result then error(lerr or "rex-nvim: could not toggle the split", 0) end
   return result
 end
 
@@ -266,7 +275,7 @@ function M.setup(opts)
   rex.action({
     name = "rex_nvim_command",
     title = "rex-nvim: Run nvim Command",
-    description = "Run a nvim command line in a new split or the window's sidebar. toggle=true closes the split this command last opened in the window instead of opening another.",
+    description = "Run a nvim command line in a new split or the window's sidebar. Toggle is the default (toggle=false disables it): the next press closes the split this command opened, or hides a visible sidebar.",
     category = "rex-nvim",
     args = {
       type = "object",
@@ -291,12 +300,13 @@ function M.setup(opts)
       if view ~= "split" and view ~= "sidebar" then
         error('rex-nvim: view must be "split" or "sidebar"', 0)
       end
+      local toggle = args.toggle ~= false
       if view == "sidebar" then
-        local result, err = sidebar.run_command(ctx, args.command)
+        local result, err = sidebar.run_command(ctx, args.command, toggle)
         if not result then error(err or "rex-nvim: could not run the command", 0) end
         return result
       end
-      if args.toggle then
+      if toggle then
         return command_split_toggled(ctx, args)
       end
       return command_split(ctx, args)
