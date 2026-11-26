@@ -18,11 +18,13 @@ Two halves in one repo:
 
 ## Features
 
-- **Full-height nvim sidebar, one key to toggle.** `cmd+e` hides or shows the
-  window's nvim pane. Hiding *detaches* the running pane instead of killing it,
-  so buffers, cursor, folds and pending comments survive; showing moves the
-  same pane back beside its anchor. Each Rex window gets its own nvim daemon,
-  and closing the window or the session reaps it (unsaved buffers included).
+- **Full-height nvim sidebar, one key to toggle.** The toggle key is a plain
+  `init.lua` binding (`cmd+e` as the installer writes it) that hides or shows
+  the window's nvim pane. Hiding *detaches* the running pane instead of
+  killing it, so buffers, cursor, folds and pending comments survive; showing
+  moves the same pane back beside its anchor. Each Rex window gets its own nvim
+  daemon, and closing the window or the session reaps it (unsaved buffers
+  included).
 - **Fuzzy file picker.** `cmd+o` opens on the files the agent in that pane
   touched this session, newest first with `+N -M` diff stats and a `new`
   badge. Type to fuzzy-search the whole repo (`.gitignore` honored, served by
@@ -78,6 +80,8 @@ if the file does not already load rex-nvim:
 ```lua
 -- rex-nvim begin
 require("rex-nvim").setup{ root = "/path/to/rex-nvim" }
+rex.bind("cmd+e", "rex_nvim_toggle", {})
+rex.bind("cmd+o", "rex_nvim_pick", {})
 -- rex-nvim end
 ```
 
@@ -120,13 +124,26 @@ a plugin manager; the nvim plugin is what provides `:Rex` and the comments.
 | `<leader>aS` | send all comments to the agent (paste + submit) |
 | `<leader>ai` | drop `path:line` at the agent's cursor |
 
-The Rex keys are never bound over an existing `init.lua` binding. Pass
-`setup{ keys = { toggle = "…", pick = "…" } }` to choose others, or `false` to
-skip one. The nvim-side keys are configurable — see `:help rex-nvim-config`.
+`cmd+e` and `cmd+o` are ordinary `init.lua` bindings, not plugin defaults: the
+installer writes them after the setup marker, and you edit or delete them
+there like any other Rex key.
 
-Git UIs are user-bound, not default keys: `rex_nvim_command` takes a `command`
-line plus `view` (`split` or `sidebar`) and geometry args. In
-`~/.config/rex/init.lua`, after the setup marker:
+```lua
+rex.bind("cmd+e", "rex_nvim_toggle", {})
+rex.bind("cmd+o", "rex_nvim_pick", {})
+```
+
+`setup{ keys = { toggle = "…", pick = "…" } }` still binds them from the plugin
+instead, and no Rex key is ever bound over an existing `init.lua` binding; pass
+`false` to skip one. Nav and resize (`ctrl+hjkl`, `alt+hjkl`) stay auto-bound.
+The nvim-side keys are configurable — see `:help rex-nvim-config`.
+
+Git UIs are user-bound, not default keys: `rex_nvim_command` runs a `command`
+line (no leading `:`) with `view = "split"` (default) or `"sidebar"`. Splits
+accept geometry args — `direction` `horizontal` (default) or `vertical`, `side`
+`before`/`after` the calling pane (default `after`), `ratio` between 0 and 1
+(default `0.5`) — and re-pressing the key closes what it opened unless
+`toggle = false`. In `~/.config/rex/init.lua`, after the setup marker:
 
 ```lua
 rex.bind("cmd+g", "rex_nvim_command", { command = "DiffviewOpen", view = "split" })
@@ -330,8 +347,9 @@ daemon and temp state, and exits 1 if any check fails.
   picker. Old daemons keep running until then; `rex-nvim daemons stop
   --orphans` cleans them up.
 - **Keys do nothing:** `rex config check` lists the loaded actions and
-  bindings. If `cmd+e`/`cmd+o` were already bound in `init.lua`, rex-nvim
-  leaves them alone (by design); choose other keys in `setup{ keys = … }`.
+  bindings. `cmd+e`/`cmd+o` are plain `init.lua` bindings now — look for the
+  `rex.bind(...)` lines after the `-- rex-nvim begin` marker, and make sure no
+  later binding claims the key first.
 
 ## Deviations from [herdr-nvim](https://github.com/ChmaraX/herdr-nvim)
 

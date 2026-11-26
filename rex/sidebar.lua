@@ -400,6 +400,7 @@ local function ensure_open_inner(state)
       session_id = state.session_id,
       layout = rex.layout.block({
         flavor = SHELL,
+        label = "nvim",
         options = {
           command = M.sidebar_command(state),
           shell = "none",

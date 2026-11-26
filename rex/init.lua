@@ -2,7 +2,7 @@
 --
 -- init.lua in ~/.config/rex does:
 --   require("rex-nvim").setup{ root = "/path/to/rex-nvim" }
--- and this module registers the actions and the default key bindings.
+-- and this module registers the actions and the built-in nav/resize bindings.
 
 local util = require("rex-nvim.util")
 local sidebar = require("rex-nvim.sidebar")
@@ -201,10 +201,11 @@ function M.setup(opts)
   nav.configure({ resize_amount = opts.resize_amount })
 
   local keys = opts.keys or {}
+  -- toggle and pick are user-bound in ~/.config/rex/init.lua (the installer
+  -- writes cmd+e / cmd+o there). The plugin leaves them unbound unless
+  -- setup{ keys = { toggle = ..., pick = ... } } opts in; false skips.
   local toggle_key = keys.toggle
-  if toggle_key == nil then toggle_key = "cmd+e" end
   local pick_key = keys.pick
-  if pick_key == nil then pick_key = "cmd+o" end
 
   rex.action({
     name = "rex_nvim_toggle",

@@ -82,6 +82,8 @@ add_marker() {
   {
     printf '\n-- rex-nvim begin\n'
     printf 'require("rex-nvim").setup{ root = "%s" }\n' "$(lua_escape "$root")"
+    printf 'rex.bind("cmd+e", "rex_nvim_toggle", {})\n'
+    printf 'rex.bind("cmd+o", "rex_nvim_pick", {})\n'
     printf -- '-- rex-nvim end\n'
   } >> "$file"
   say "added the rex-nvim block to $file"
